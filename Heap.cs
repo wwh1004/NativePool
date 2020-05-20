@@ -18,7 +18,7 @@ class Heap<T> where T : struct, IComparable<T> {
 
     public void Put(T item) {
         if (count == heap.Length)
-            Array.Resize(ref heap, heap.Length * 2 + 1);
+            Array.Resize(ref heap, (heap.Length * 2) + 1);
 
         heap[count++] = item;
         UpHeap(count - 1);
@@ -61,8 +61,8 @@ class Heap<T> where T : struct, IComparable<T> {
 
     void DownHeap(int index) {
         while (index < count) {
-            int left = 2 * index + 1,
-                right = 2 * index + 2,
+            int left = (2 * index) + 1,
+                right = (2 * index) + 2,
                 target = index;
 
             if (left < count && heap[left].CompareTo(heap[target]) < 0)

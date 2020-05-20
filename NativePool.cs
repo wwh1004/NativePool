@@ -5,14 +5,19 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace Unsafe {
+namespace NativePool {
     public abstract class NativeObject : IDisposable {
         protected NativeObject() => throw new InvalidOperationException("Must be instantiate through NativePool!");
 
         internal PoolBlock block;
 
-        public void Free() => block.Pool.Free(this);
-        void IDisposable.Dispose() => block.Pool.Free(this);
+        public void Free() {
+            block.Pool.Free(this);
+        }
+
+        void IDisposable.Dispose() {
+            block.Pool.Free(this);
+        }
     }
 
     internal class PoolBlock {
@@ -60,9 +65,10 @@ namespace Unsafe {
 
             Exception error = null;
             try {
-                typeHnd = UnsafeUtils.GetTypeHandle<T>();
-                objSize = UnsafeUtils.GetTypeSize<T>();
-            } catch (Exception ex) {
+                typeHnd = (IntPtr)Unsafe.GetTypeHandle<T>();
+                objSize = (int)Unsafe.GetTypeSize<T>();
+            }
+            catch (Exception ex) {
                 error = ex;
             }
             if (error != null)
@@ -76,7 +82,7 @@ namespace Unsafe {
         PoolBlock tail;
         bool disposed;
 
-        public int NumObjects => (tail?.Id + 1 ?? 0) * numBlockElems - free.Count;
+        public int NumObjects => ((tail?.Id + 1 ?? 0) * numBlockElems) - free.Count;
         public bool IsFull => free.Count == 0;
 
         public NativePool(int numBlockElems = 0x100, int numInitialBlocks = 1) {
@@ -109,14 +115,15 @@ namespace Unsafe {
                     MakeBlock();
 
                 ent = free.Take();
-                var ptr = ent.Block.Address + ent.Index * objSize;
+                var ptr = ent.Block.Address + (ent.Index * objSize);
                 byte* p = (byte*)ptr;
                 for (int i = 0; i < objSize; i++)
                     p[i] = 0;
                 *(IntPtr*)ptr = typeHnd;
 
                 return (ent.Block, ptr);
-            } finally {
+            }
+            finally {
                 sync.ExitWriteLock();
             }
         }
@@ -126,24 +133,31 @@ namespace Unsafe {
             try {
                 var index = (int)((byte*)ptr - (byte*)block.Address) / objSize;
                 free.Put(new PoolEntry(block, index));
-            } finally {
+            }
+            finally {
                 sync.ExitWriteLock();
             }
         }
 
-        static void SetBlock(ref PoolBlock target, PoolBlock value) => target = value;
+        static void SetBlock(ref PoolBlock target, PoolBlock value) {
+            target = value;
+        }
+
         public T New() {
             if (disposed)
                 throw new ObjectDisposedException(GetType().FullName);
 
             var (block, ptr) = Alloc(typeHnd);
-            var obj = UnsafeUtils.ToObject<T>(ptr);
+            var obj = Unsafe.ToObject<T>((void*)ptr);
             SetBlock(ref obj.block, block);
 
             return obj;
         }
 
-        void INativePool.Free(NativeObject obj) => Free((T)obj);
+        void INativePool.Free(NativeObject obj) {
+            Free((T)obj);
+        }
+
         public void Free(T obj) {
             if (disposed)
                 throw new ObjectDisposedException(GetType().FullName);
@@ -151,7 +165,7 @@ namespace Unsafe {
             var block = obj.block;
             SetBlock(ref obj.block, null);
 
-            var ptr = UnsafeUtils.AddressOf(obj);
+            var ptr = (IntPtr)Unsafe.ToPointer(obj);
             *(IntPtr*)ptr = IntPtr.Zero;
             Free(block, ptr);
         }
@@ -170,7 +184,8 @@ namespace Unsafe {
 
                 free.Clear();
                 disposed = true;
-            } finally {
+            }
+            finally {
                 sync.ExitWriteLock();
             }
         }
@@ -179,7 +194,9 @@ namespace Unsafe {
             Dispose(false);
         }
 
-        public PoolEnumerator GetEnumerator() => new PoolEnumerator(this);
+        public PoolEnumerator GetEnumerator() {
+            return new PoolEnumerator(this);
+        }
 
         public struct PoolEnumerator : IEnumerator<T> {
             NativePool<T> pool;
@@ -191,8 +208,8 @@ namespace Unsafe {
                 current = IntPtr.Zero;
             }
 
-            object IEnumerator.Current => UnsafeUtils.ToObject<T>(current);
-            public T Current => UnsafeUtils.ToObject<T>(current);
+            object IEnumerator.Current => Unsafe.ToObject<T>((void*)current);
+            public T Current => Unsafe.ToObject<T>((void*)current);
 
             public bool MoveNext() {
                 pool.sync.EnterReadLock();
@@ -202,7 +219,8 @@ namespace Unsafe {
                         if (block == null)
                             return false;
                         current = block.Address;
-                    } else if (block == null)
+                    }
+                    else if (block == null)
                         return false;
                     else
                         current += objSize;
@@ -210,7 +228,7 @@ namespace Unsafe {
                     bool found;
                     do {
                         found = true;
-                        var end = block.Address + pool.numBlockElems * objSize;
+                        var end = block.Address + (pool.numBlockElems * objSize);
                         while (current != end && *(IntPtr*)current != typeHnd)
                             current += objSize;
 
@@ -223,13 +241,16 @@ namespace Unsafe {
                         }
                     } while (!found);
                     return true;
-                } finally {
+                }
+                finally {
                     pool.sync.ExitReadLock();
                 }
             }
 
             public void Dispose() { }
-            public void Reset() => throw new NotSupportedException();
+            public void Reset() {
+                throw new NotSupportedException();
+            }
         }
     }
 }
